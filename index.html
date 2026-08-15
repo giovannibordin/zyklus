@@ -65,18 +65,26 @@
     --accent:     #3987e5;
     --critical:   #d03b3b;
 
+    /* Anche al buio la rampa va da chiaro a scuro, come alla luce: più scuro
+       vuol dire più dolore, in tutte e due le modalità. Sul fondo quasi nero
+       questo comprime la rampa — il gradino più scuro non può scendere fino al
+       blu notte della modalità chiara, altrimenti sparirebbe. Questi tre passi
+       sono i più scuri che restano leggibili: l'ultimo tiene 3,23:1 contro il
+       fondo, ben sopra il minimo. Il livello 0 resta invece vicino al fondo,
+       così un giorno senza dolore continua a farsi da parte. */
     --pain-0:     #2c2c2a;
-    --pain-1:     #184f95;
-    --pain-2:     #3987e5;
-    --pain-3:     #b7d3f6;
+    --pain-1:     #cde2fb;
+    --pain-2:     #5598e7;
+    --pain-3:     #256abf;
     --pain-0-ink: #c3c2b7;
-    --pain-1-ink: #ffffff;
-    --pain-2-ink: #ffffff;
-    --pain-3-ink: #0b0b0b;
+    --pain-1-ink: #0b0b0b;
+    --pain-2-ink: #0b0b0b;
+    --pain-3-ink: #ffffff;
 
-    --flow-1:     #992424;
-    --flow-2:     #e34948;
-    --flow-3:     #f4b0b0;
+    /* Stessa logica per il flusso: chiaro = spotting, scuro = forte. */
+    --flow-1:     #f7c3c3;
+    --flow-2:     #e66767;
+    --flow-3:     #bc3232;
   }
 }
 
@@ -201,6 +209,9 @@ h2 { font-size: 0.95rem; font-weight: 600; margin: 0 0 10px; }
 .seg.pain button[aria-pressed="true"][data-v="2"] { background: var(--pain-1); color: var(--pain-1-ink); }
 .seg.pain button[aria-pressed="true"][data-v="5"] { background: var(--pain-2); color: var(--pain-2-ink); }
 .seg.pain button[aria-pressed="true"][data-v="8"] { background: var(--pain-3); color: var(--pain-3-ink); }
+/* Il sonno non ha una rampa di colore propria: userebbe una terza tinta sulla
+   stessa schermata senza aggiungere informazione. Basta il bordo di selezione. */
+.seg.sleep button[aria-pressed="true"] { background: var(--pain-0); border-color: var(--accent); }
 .seg.flow button[aria-pressed="true"][data-v="1"] { background: var(--flow-1); color: #0b0b0b; }
 .seg.flow button[aria-pressed="true"][data-v="2"] { background: var(--flow-2); color: #ffffff; }
 .seg.flow button[aria-pressed="true"][data-v="3"] { background: var(--flow-3); color: #ffffff; }
@@ -362,6 +373,13 @@ table.data th { color: var(--ink-muted); font-weight: 500; }
         <div id="symlist"></div>
       </details>
       <p class="note" data-t="ed.symptomsNote"></p>
+    </div>
+
+    <div class="card">
+      <h2 data-t="ed.sleepTitle"></h2>
+      <div class="seg sleep" id="seg-sleep"></div>
+      <p class="note" data-t="ed.sleepClear"></p>
+      <p class="note" data-t="ed.sleepNote"></p>
     </div>
 
     <div class="card">

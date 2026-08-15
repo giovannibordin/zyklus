@@ -41,8 +41,12 @@ export const T = {
     { key: 'diarrhea',       label: 'Durchfall',                     csv: 'durchfall' },
     { key: 'constipation',   label: 'Verstopfung',                   csv: 'verstopfung' },
     { key: 'dyspareunia',    label: 'Schmerzen beim oder nach dem Sex', csv: 'schmerz_sex' },
-    { key: 'poor_sleep',     label: 'Schlechter Schlaf',             csv: 'schlechter_schlaf' },
   ],
+
+  // -- Schlaf ------------------------------------------------------------------
+  // Eigene Skala statt eines Häkchens: Schlafqualität ist von Natur aus
+  // abgestuft, und es kostet denselben einen Tipper.
+  sleep: ['Gut', 'Mittel', 'Schlecht', 'Sehr schlecht'],
 
   // -- Kalender ---------------------------------------------------------------
   cal: {
@@ -76,6 +80,10 @@ export const T = {
     symptoms: 'Weitere Symptome',
     symptomsN: (n) => `Weitere Symptome (${n})`,
     symptomsNote: 'Diese Liste folgt den Leitsymptomen der ESHRE-Leitlinie 2022 zur Endometriose, ergänzt um die Darm- und Blasenfragen des WERF-EPHect-Fragebogens.',
+    sleepTitle: 'Wie hast du geschlafen?',
+    sleepSub: 'letzte Nacht',
+    sleepClear: 'Tippe die gewählte Stufe erneut an, um die Angabe zu löschen.',
+    sleepNote: 'Freiwillig. Eine Metaanalyse von 2026 findet bei Endometriose schlechteren Schlaf (gepooltes SMD 0,69), allerdings mit sehr großer Streuung zwischen den Studien. Ob der Schlaf bei ihr selbst mit dem Schmerz zusammenhängt, kann nur diese Aufzeichnung zeigen.',
     analgTitle: 'Schmerzmittel',
     analgCheck: 'Ich habe ein Schmerzmittel genommen',
     analgPlaceholder: 'Welches und wie oft',
@@ -149,6 +157,18 @@ export const T = {
     symptomSplit: (a, b) => `Periode ${a} % · außerhalb ${b} %`,
     symptomDelta: (sign, v) => `Schmerz ${sign}${v}`,
     symptomNote: '«Schmerz +x» ist der Unterschied im mittleren Schmerz zwischen Tagen mit und ohne dieses Symptom. Das beschreibt die erfassten Daten, es ist kein Ursache-Wirkung-Zusammenhang: bei wenigen Zyklen schwanken diese Zahlen stark.',
+
+    sleepTitle: 'Schlaf',
+    sleepNights: 'Erfasste Nächte',
+    sleepCol: 'Schlaf',
+    sleepColNights: 'Nächte',
+    sleepColSame: 'Schmerz am Tag',
+    sleepColNext: 'Schmerz am Folgetag',
+    sleepGoodVsBad: 'Schmerz nach guter / schlechter Nacht',
+    sleepDuringMenses: 'Schlechte Nächte während der Periode',
+    sleepOutside: 'Schlechte Nächte außerhalb',
+    sleepNone: 'Noch keine Nacht erfasst. Die Skala steht im Tageseditor unter «Wie hast du geschlafen?».',
+    sleepNote: 'Als schlecht zählen «Schlecht» und «Sehr schlecht». Die Spalte «Schmerz am Folgetag» ist der interessante Teil: sie fragt, ob eine schlechte Nacht einem schlechteren Tag vorausgeht. Auch das beschreibt nur die erfassten Daten — für Endometriose ist kein Zusammenhang auf Tagesebene belegt, weder in die eine noch in die andere Richtung.',
 
     spotting: 'Zwischenblutung',
     oneDay: '1 Tag',
@@ -247,6 +267,7 @@ export const T = {
     cycleDay: 'zyklustag',
     analgesic: 'schmerzmittel',
     analgesicNote: 'schmerzmittel_notiz',
+    sleep: 'schlaf',
     note: 'notiz',
   },
 };

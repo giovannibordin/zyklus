@@ -252,6 +252,47 @@ export function analyse(logs, today = todayKey()) {
     .filter((s) => s.days > 0)
     .sort((a, b) => (b.painDelta ?? -99) - (a.painDelta ?? -99));
 
+  // --- Sonno
+  // Due letture per ogni livello: il dolore dello stesso giorno e quello del
+  // giorno dopo. La seconda è quella interessante — chiede se una brutta notte
+  // precede una brutta giornata — ma resta una descrizione, non un nesso.
+  const sleepLogs = sorted.filter((l) => l.sleep !== null && l.sleep !== undefined);
+  const sleepByLevel = [0, 1, 2, 3].map((lvl) => {
+    const nights = sleepLogs.filter((l) => l.sleep === lvl);
+    const nextPains = [];
+    for (const l of nights) {
+      const nxt = painByDay.get(addDays(l.date, 1));
+      if (nxt !== undefined) nextPains.push(nxt);
+    }
+    return {
+      level: lvl,
+      nights: nights.length,
+      meanPainSameDay: avg(nights.map((l) => l.pain)),
+      meanPainNextDay: nextPains.length ? avg(nextPains) : null,
+    };
+  });
+
+  const goodNights = sleepLogs.filter((l) => l.sleep <= 1);
+  const badNights = sleepLogs.filter((l) => l.sleep >= 2);
+  const nextAfter = (arr) => {
+    const v = [];
+    for (const l of arr) {
+      const nxt = painByDay.get(addDays(l.date, 1));
+      if (nxt !== undefined) v.push(nxt);
+    }
+    return v.length ? avg(v) : null;
+  };
+  const sleep = {
+    nights: sleepLogs.length,
+    byLevel: sleepByLevel,
+    meanPainAfterGood: nextAfter(goodNights),
+    meanPainAfterBad: nextAfter(badNights),
+    badDuringMenses: mensLogs.filter((l) => l.sleep >= 2).length,
+    badOutside: outLogs.filter((l) => l.sleep >= 2).length,
+    mensNightsLogged: mensLogs.filter((l) => l.sleep !== null && l.sleep !== undefined).length,
+    outsideNightsLogged: outLogs.filter((l) => l.sleep !== null && l.sleep !== undefined).length,
+  };
+
   // --- Qualità dei dati
   let completeness = null;
   if (sorted.length) {
@@ -274,7 +315,7 @@ export function analyse(logs, today = todayKey()) {
 
   return {
     logs: sorted, episodes, cycles, closed, summary, pain, profile,
-    symptomStats, completeness, menstrualDays,
+    symptomStats, sleep, completeness, menstrualDays,
     spottingOnly: episodes.filter((e) => !e.isMenstrual),
     open,
     openDay: open ? diffDays(open.start, today) + 1 : null,

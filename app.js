@@ -102,6 +102,25 @@ async function reload() {
 }
 
 /**
+ * La spunta «schlechter Schlaf» è diventata una scala. Chi aveva già usato la
+ * versione precedente non deve perdere quelle notti: la spunta vale «Schlecht».
+ * Gira una volta sola, poi resta un flag nel piccolo archivio meta.
+ */
+async function migrateSleep() {
+  if (await getMeta('sleepMigrated')) return;
+  const affected = logs.filter((l) => Array.isArray(l.symptoms) && l.symptoms.includes('poor_sleep'));
+  for (const l of affected) {
+    await put({
+      ...l,
+      sleep: (l.sleep === null || l.sleep === undefined) ? 2 : l.sleep,
+      symptoms: l.symptoms.filter((k) => k !== 'poor_sleep'),
+    });
+  }
+  await setMeta('sleepMigrated', true);
+  if (affected.length) await reload();
+}
+
+/**
  * Giorni dall'ultimo backup, null se non ne è mai stato fatto uno.
  * Serve al promemoria: l'esportazione è l'unica protezione verificata dei dati,
  * quindi non può dipendere dal fatto che qualcuno se ne ricordi.
@@ -315,6 +334,22 @@ function buildSegments() {
     f.appendChild(btn);
   });
 
+  const sl = $('#seg-sleep');
+  sl.textContent = '';
+  T.sleep.forEach((label, v) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.dataset.v = v;
+    btn.textContent = label;
+    // Ritoccare la stessa stufa cancella la risposta: «non l'ho segnato» deve
+    // restare distinto da «ho dormito bene».
+    btn.addEventListener('click', () => {
+      draft.sleep = draft.sleep === v ? null : v;
+      syncSheet();
+    });
+    sl.appendChild(btn);
+  });
+
   const list = $('#symlist');
   list.textContent = '';
   SYMPTOMS.forEach((s) => {
@@ -338,8 +373,8 @@ function openEditor(key) {
   editing = key;
   const ex = byDate.get(key);
   draft = ex
-    ? { ...ex, symptoms: [...ex.symptoms] }
-    : { date: key, pain: 0, flow: 0, symptoms: [], analgesic: false, analgesicNote: '', note: '' };
+    ? { ...ex, symptoms: [...ex.symptoms], sleep: ex.sleep ?? null }
+    : { date: key, pain: 0, flow: 0, sleep: null, symptoms: [], analgesic: false, analgesicNote: '', note: '' };
 
   $('#sheettitle').textContent = longDate(key);
   $('#btn-delete').classList.toggle('hidden', !ex);
@@ -357,6 +392,8 @@ function syncSheet() {
     : PAIN_BAND_VALUES[painBand(draft.pain)];
   $$('#seg-pain button').forEach((b) => b.setAttribute('aria-pressed', Number(b.dataset.v) === target));
   $$('#seg-flow button').forEach((b) => b.setAttribute('aria-pressed', Number(b.dataset.v) === draft.flow));
+  $$('#seg-sleep button').forEach((b) => b.setAttribute('aria-pressed',
+    draft.sleep !== null && draft.sleep !== undefined && Number(b.dataset.v) === draft.sleep));
 
   const precise = $('#chk-precise').checked;
   $('#precise-wrap').classList.toggle('hidden', !precise);
@@ -695,6 +732,28 @@ function renderStats() {
     host.appendChild(c);
   }
 
+  // -- sonno
+  {
+    const sl = a.sleep;
+    const c = card(T.st.sleepTitle);
+    if (!sl.nights) {
+      note(c, T.st.sleepNone);
+    } else {
+      row(c, T.st.sleepNights, String(sl.nights));
+      if (sl.meanPainAfterGood !== null || sl.meanPainAfterBad !== null) {
+        row(c, T.st.sleepGoodVsBad, `${n1(sl.meanPainAfterGood)} / ${n1(sl.meanPainAfterBad)}`);
+      }
+      if (sl.mensNightsLogged) row(c, T.st.sleepDuringMenses, `${sl.badDuringMenses} / ${sl.mensNightsLogged}`);
+      if (sl.outsideNightsLogged) row(c, T.st.sleepOutside, `${sl.badOutside} / ${sl.outsideNightsLogged}`);
+      details(c, [T.st.sleepCol, T.st.sleepColNights, T.st.sleepColSame, T.st.sleepColNext],
+        sl.byLevel.filter((x) => x.nights > 0).map((x) => [
+          T.sleep[x.level], String(x.nights), n1(x.meanPainSameDay), n1(x.meanPainNextDay),
+        ]));
+      note(c, T.st.sleepNote);
+    }
+    host.appendChild(c);
+  }
+
   // -- spotting
   if (a.spottingOnly.length) {
     const c = card(T.st.spotting);
@@ -768,7 +827,7 @@ function buildCSV() {
   const a = analyse(logs);
   const C = T.csv;
   const head = [C.date, C.painNrs, C.painBand, C.flow, C.isMenses, C.cycleDay,
-    C.analgesic, C.analgesicNote, ...SYMPTOMS.map((s) => s.csv), C.note];
+    C.sleep, C.analgesic, C.analgesicNote, ...SYMPTOMS.map((s) => s.csv), C.note];
   const lines = [head.join(',')];
 
   for (const l of a.logs) {
@@ -779,6 +838,7 @@ function buildCSV() {
     lines.push([
       l.date, l.pain, painLabel(l.pain), T.flow[l.flow],
       a.menstrualDays.has(l.date) ? 1 : 0, cycleDay,
+      (l.sleep === null || l.sleep === undefined) ? '' : T.sleep[l.sleep],
       l.analgesic ? 1 : 0, csvEscape(l.analgesicNote),
       ...SYMPTOMS.map((s) => (l.symptoms.includes(s.key) ? 1 : 0)),
       csvEscape(l.note),
@@ -825,6 +885,16 @@ function buildSummary() {
     t += `- ${st.label}: ${n0(st.pct)} %`;
     if (st.pctDuring !== null) t += S.symptomLine(n0(st.pctDuring), n0(st.pctOutside));
     t += '\n';
+  }
+
+  if (a.sleep.nights) {
+    t += '\n' + T.st.sleepTitle.toUpperCase() + '\n';
+    t += `${T.st.sleepNights}: ${a.sleep.nights}\n`;
+    for (const x of a.sleep.byLevel) {
+      if (!x.nights) continue;
+      t += `- ${T.sleep[x.level]}: ${x.nights} (${T.st.sleepColSame} ${n1(x.meanPainSameDay)}, ${T.st.sleepColNext} ${n1(x.meanPainNextDay)})\n`;
+    }
+    t += `${T.st.sleepGoodVsBad}: ${n1(a.sleep.meanPainAfterGood)} / ${n1(a.sleep.meanPainAfterBad)}\n`;
   }
 
   t += '\n' + S.profile + '\n' + S.profileHead + '\n';
@@ -892,8 +962,10 @@ async function loadSample() {
         if (!symptoms.includes('bloating')) symptoms.push('bloating');
       }
       if (pain === 0 && o % 3 === 0) pain = 2;
+      // Notti peggiori nei giorni di flusso, buone il resto del tempo.
+      const sleep = o < flows.length ? (heavy ? 3 : 2) : (o % 4 === 0 ? 1 : 0);
       await put({
-        date, pain, flow, symptoms,
+        date, pain, flow, sleep, symptoms,
         analgesic: pain >= 6,
         analgesicNote: pain >= 6 ? 'Ibuprofen 400' : '',
         note: '', updated: new Date().toISOString(),
@@ -982,6 +1054,10 @@ function wireEvents() {
           pain: Math.max(0, Math.min(10, Number(d.pain) || 0)),
           flow: Math.max(0, Math.min(3, Number(d.flow) || 0)),
           symptoms: Array.isArray(d.symptoms) ? d.symptoms.filter((k) => SYMPTOMS.some((s) => s.key === k)) : [],
+          // I backup vecchi portano la spunta del sonno fra i sintomi.
+          sleep: (d.sleep === null || d.sleep === undefined)
+            ? (Array.isArray(d.symptoms) && d.symptoms.includes('poor_sleep') ? 2 : null)
+            : Math.max(0, Math.min(3, Number(d.sleep))),
           analgesic: !!d.analgesic,
           analgesicNote: String(d.analgesicNote || ''),
           note: String(d.note || ''),
@@ -1022,6 +1098,8 @@ async function main() {
   }
   buildSegments();
   wireEvents();
+  await reload();
+  await migrateSleep();
   await refreshAll();
 
   if ('serviceWorker' in navigator) {
