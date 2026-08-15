@@ -1,6 +1,6 @@
 import {
   FLOW, PAIN_BAND_VALUES, SYMPTOMS,
-  painBand, analyse, addDays, diffDays, fromKey, todayKey, frequency,
+  painBand, analyse, addDays, diffDays, fromKey, toKey, todayKey, frequency,
 } from './cycle.js';
 import { T } from './strings.js';
 
@@ -12,14 +12,18 @@ const APP_VERSION = '1.0.0';
 
 const DB_NAME = 'ciclo';
 const STORE = 'days';
+const META = 'meta';
 let db = null;
 
 function openDB() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
+    const req = indexedDB.open(DB_NAME, 2);
     req.onupgradeneeded = () => {
       const d = req.result;
       if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE, { keyPath: 'date' });
+      // Versione 2: un piccolo archivio a parte per la data dell'ultimo backup.
+      // Non finisce fra i giorni, altrimenti sporcherebbe le statistiche.
+      if (!d.objectStoreNames.contains(META)) d.createObjectStore(META, { keyPath: 'k' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -27,6 +31,22 @@ function openDB() {
 }
 
 function tx(mode) { return db.transaction(STORE, mode).objectStore(STORE); }
+
+function getMeta(k) {
+  return new Promise((resolve) => {
+    const r = db.transaction(META, 'readonly').objectStore(META).get(k);
+    r.onsuccess = () => resolve(r.result ? r.result.v : null);
+    r.onerror = () => resolve(null);
+  });
+}
+
+function setMeta(k, v) {
+  return new Promise((resolve) => {
+    const r = db.transaction(META, 'readwrite').objectStore(META).put({ k, v });
+    r.onsuccess = () => resolve();
+    r.onerror = () => resolve();
+  });
+}
 
 function getAll() {
   return new Promise((resolve, reject) => {
@@ -66,6 +86,7 @@ function clearAll() {
 
 let logs = [];              // tutte le registrazioni
 let byDate = new Map();
+let lastBackup = null;      // ISO string, oppure null se non è mai stato fatto
 let anchor = todayKey();    // mese mostrato nel calendario
 let editing = null;         // chiave del giorno aperto nell'editor
 let draft = null;
@@ -77,6 +98,19 @@ async function reload() {
   logs = await getAll();
   logs.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   byDate = new Map(logs.map((l) => [l.date, l]));
+  lastBackup = await getMeta('lastBackup');
+}
+
+/**
+ * Giorni dall'ultimo backup, null se non ne è mai stato fatto uno.
+ * Serve al promemoria: l'esportazione è l'unica protezione verificata dei dati,
+ * quindi non può dipendere dal fatto che qualcuno se ne ricordi.
+ */
+function daysSinceBackup() {
+  if (!lastBackup) return null;
+  const d = new Date(lastBackup);
+  if (isNaN(d)) return null;
+  return diffDays(toKey(d), todayKey());
 }
 
 // =============================================================================
@@ -196,6 +230,30 @@ function renderCalendar() {
 
   renderLegend();
   renderStatus(a);
+  renderBackupReminder();
+}
+
+/**
+ * Promemoria del backup, in cima al calendario.
+ * Compare solo quando serve davvero: dopo due settimane di dati senza nessun
+ * backup, oppure quando l'ultimo risale a più di un mese fa.
+ */
+function renderBackupReminder() {
+  const box = $('#backupreminder');
+  box.textContent = '';
+  box.classList.add('hidden');
+  if (!logs.length) return;
+
+  const since = daysSinceBackup();
+  const dataAge = diffDays(logs[0].date, todayKey());
+  let msg = null;
+  if (since === null && dataAge >= 14) msg = T.ex.neverBackedUp;
+  else if (since !== null && since >= 30) msg = T.ex.backupOld(since);
+  if (!msg) return;
+
+  box.textContent = msg;
+  box.classList.remove('hidden');
+  box.onclick = () => showView('export');
 }
 
 function renderLegend() {
@@ -658,6 +716,10 @@ function renderExport() {
     row(i, T.ex.from, fullDate(logs[0].date));
     row(i, T.ex.to, fullDate(logs[logs.length - 1].date));
   }
+  const since = daysSinceBackup();
+  row(i, T.ex.lastBackup, lastBackup
+    ? `${fullDate(toKey(new Date(lastBackup)))} (${since === 0 ? T.ex.today : T.ex.daysAgo(since)})`
+    : T.ex.never);
   $('#version').textContent = `${T.appName} ${APP_VERSION}`;
   updateStorageInfo();
 }
@@ -768,16 +830,18 @@ async function deliver(text, filename, mime) {
     const file = new File([text], filename, { type: mime });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       await navigator.share({ files: [file], title: filename });
-      return;
+      return true;
     }
   } catch (e) {
-    if (e && e.name === 'AbortError') return;
+    // Annullato dall'utente: non è un errore, ma non è nemmeno un backup fatto.
+    if (e && e.name === 'AbortError') return false;
   }
   const url = URL.createObjectURL(new Blob([text], { type: mime }));
   const a = document.createElement('a');
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
+  return true;
 }
 
 function stamp() {
@@ -874,9 +938,17 @@ function wireEvents() {
 
   $('#btn-csv').addEventListener('click', () => deliver(buildCSV(), `zyklus-${stamp()}.csv`, 'text/csv'));
   $('#btn-summary').addEventListener('click', () => deliver(buildSummary(), `zusammenfassung-${stamp()}.txt`, 'text/plain'));
-  $('#btn-json').addEventListener('click', () => deliver(
-    JSON.stringify({ app: 'zyklus', version: APP_VERSION, exported: new Date().toISOString(), days: logs }, null, 1),
-    `backup-zyklus-${stamp()}.json`, 'application/json'));
+  $('#btn-json').addEventListener('click', async () => {
+    const ok = await deliver(
+      JSON.stringify({ app: 'zyklus', version: APP_VERSION, exported: new Date().toISOString(), days: logs }, null, 1),
+      `backup-zyklus-${stamp()}.json`, 'application/json');
+    // Solo un backup andato a buon fine azzera il promemoria. Se lei annulla
+    // il foglio di condivisione, il conteggio continua a correre.
+    if (ok) {
+      await setMeta('lastBackup', new Date().toISOString());
+      await refreshAll();
+    }
+  });
 
   $('#btn-import').addEventListener('click', () => $('#file-import').click());
   $('#file-import').addEventListener('change', async (e) => {
