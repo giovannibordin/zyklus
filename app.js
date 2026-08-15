@@ -541,10 +541,10 @@ function note(parent, text) {
   parent.appendChild(p);
 }
 
-function details(parent, headers, rows) {
+function details(parent, headers, rows, label = T.st.seeNumbers) {
   const det = document.createElement('details');
   const sum = document.createElement('summary');
-  sum.textContent = T.st.seeNumbers;
+  sum.textContent = label;
   det.appendChild(sum);
   const t = document.createElement('table');
   t.className = 'data';
@@ -720,6 +720,22 @@ function renderExport() {
   row(i, T.ex.lastBackup, lastBackup
     ? `${fullDate(toKey(new Date(lastBackup)))} (${since === 0 ? T.ex.today : T.ex.daysAgo(since)})`
     : T.ex.never);
+
+  // Elenco completo di quello che c'è sul telefono. iOS non offre nessun modo
+  // di sfogliare questo archivio dalle impostazioni, quindi lo mostra l'app.
+  if (logs.length) {
+    details(i, [T.ex.colDate, T.ex.colPain, T.ex.colFlow, T.ex.colExtra],
+      [...logs].reverse().map((l) => {
+        const extra = [];
+        if (l.symptoms.length) extra.push(`${l.symptoms.length} ×`);
+        if (l.analgesic) extra.push('Rx');
+        if (l.note) extra.push('✎');
+        return [fullDate(l.date), `${l.pain}`, T.flow[l.flow], extra.join(' ') || '—'];
+      }), T.ex.allEntries);
+    note(i, T.ex.entriesNote);
+  } else {
+    note(i, T.ex.noEntries);
+  }
   $('#version').textContent = `${T.appName} ${APP_VERSION}`;
   updateStorageInfo();
 }
