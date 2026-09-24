@@ -215,8 +215,18 @@ export function analyse(logs, today = todayKey()) {
 
   // --- Profilo del dolore allineato all'inizio delle mestruazioni
   const painByDay = new Map(sorted.map((l) => [l.date, l.pain]));
+  // L'asse arriva fino all'ultimo giorno del ciclo più lungo (e fino a oggi per
+  // quello aperto): prima era fisso a +20 e tutto ciò che seguiva spariva.
+  // Minimo +20 perché il grafico abbia sempre una forma leggibile; tetto a 120
+  // perché una lacuna di mesi nei dati non produca un asse lunghissimo e vuoto.
+  let lastOffset = 20;
+  for (const c of cycles) {
+    const last = c.closed ? c.length - 1 : diffDays(c.start, today);
+    if (last > lastOffset) lastOffset = last;
+  }
+  lastOffset = Math.min(lastOffset, 120);
   const profile = [];
-  for (let k = -7; k <= 20; k++) {
+  for (let k = -7; k <= lastOffset; k++) {
     const vals = [];
     for (const c of cycles) {
       const d = addDays(c.start, k);

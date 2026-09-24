@@ -490,37 +490,68 @@ function cycleChart(cycles, readout) {
   return svg;
 }
 
-/** Linea: dolore medio in funzione del giorno rispetto all'inizio del ciclo. */
+/**
+ * Linea: dolore medio in funzione del giorno rispetto all'inizio del ciclo.
+ *
+ * L'asse x è lungo quanto il ciclo più lungo, quindi non entra sempre nello
+ * schermo. L'asse y resta fermo a sinistra; l'area del grafico scorre in
+ * orizzontale con il dito (scroll nativo, niente gesti fatti a mano).
+ * Restituisce un <div>, non un <svg>.
+ */
 function profileChart(points, readout) {
-  const W = 320, H = 180, ML = 24, MR = 10, MT = 12, MB = 30;
-  const svg = el('svg', { class: 'chart', viewBox: `0 0 ${W} ${H}`, role: 'img',
+  const H = 176, MT = 14, MB = 18, YW = 24, PAD = 12;
+  const DX = 11;                                // px per giorno: ~4 settimane visibili su un iPhone
+  const x0 = points[0].offset, x1 = points[points.length - 1].offset;
+  const PW = PAD * 2 + (x1 - x0) * DX;
+  const px = (o) => PAD + (o - x0) * DX;
+  const py = (v) => MT + (H - MT - MB) * (1 - v / 10);
+  const pts = points.filter((p) => p.mean !== null);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'chart-wrap';
+
+  // -- asse y fisso
+  const ax = el('svg', { class: 'chart yaxis', width: YW, height: H, viewBox: `0 0 ${YW} ${H}`, 'aria-hidden': 'true' });
+  for (const t of [0, 5, 10]) {
+    ax.appendChild(el('text', { class: 'tick', x: YW - 4, y: py(t) + 3, 'text-anchor': 'end' }, String(t)));
+  }
+  wrap.appendChild(ax);
+
+  // -- area scorrevole
+  const scroller = document.createElement('div');
+  scroller.className = 'chart-scroll';
+  const svg = el('svg', { class: 'chart', width: PW, height: H, viewBox: `0 0 ${PW} ${H}`, role: 'img',
     'aria-label': T.st.profile });
 
-  const pts = points.filter((p) => p.mean !== null);
-  const x0 = points[0].offset, x1 = points[points.length - 1].offset;
-  const px = (o) => ML + ((o - x0) * (W - ML - MR)) / (x1 - x0);
-  const py = (v) => MT + (H - MT - MB) * (1 - v / 10);
-
   for (const t of [0, 5, 10]) {
-    svg.appendChild(el('line', { class: 'gridline', x1: ML, x2: W - MR, y1: py(t), y2: py(t) }));
-    svg.appendChild(el('text', { class: 'tick', x: ML - 4, y: py(t) + 3, 'text-anchor': 'end' }, String(t)));
+    svg.appendChild(el('line', { class: 'gridline', x1: 0, x2: PW, y1: py(t), y2: py(t) }));
   }
-  for (const t of [-7, 0, 7, 14, 20]) {
-    if (t < x0 || t > x1) continue;
+  // Tacche ogni settimana, allineate all'inizio delle mestruazioni (…, -7, 0, 7, 14, …).
+  for (let t = Math.ceil(x0 / 7) * 7; t <= x1; t += 7) {
     svg.appendChild(el('text', { class: 'tick', x: px(t), y: H - MB + 12, 'text-anchor': 'middle' }, String(t)));
   }
-  svg.appendChild(el('line', { class: 'axis', x1: ML, x2: W - MR, y1: py(0), y2: py(0) }));
+  svg.appendChild(el('line', { class: 'axis', x1: 0, x2: PW, y1: py(0), y2: py(0) }));
   svg.appendChild(el('line', { class: 'onset', x1: px(0), x2: px(0), y1: MT, y2: py(0) }));
   // etichetta in basso, dove non litiga con il picco della curva
   svg.appendChild(el('text', { class: 'lbl', x: px(0) + 3, y: py(0) - 4 }, T.st.onset));
 
+  // La linea si interrompe dove mancano dati: unire due punti lontani
+  // inventerebbe dei giorni che nessuno ha registrato.
   if (pts.length > 1) {
-    svg.appendChild(el('path', {
-      class: 'series',
-      d: pts.map((p, i) => `${i ? 'L' : 'M'}${px(p.offset).toFixed(1)},${py(p.mean).toFixed(1)}`).join(' '),
-    }));
+    let d = '', prev = null;
+    for (const p of pts) {
+      d += `${prev !== null && p.offset === prev + 1 ? 'L' : 'M'}${px(p.offset).toFixed(1)},${py(p.mean).toFixed(1)} `;
+      prev = p.offset;
+    }
+    svg.appendChild(el('path', { class: 'series', d: d.trim() }));
   }
-  // Un solo marcatore, sul picco: niente un pallino su ogni punto.
+  // Punti isolati (senza vicini) altrimenti sarebbero invisibili.
+  pts.forEach((p) => {
+    const hasPrev = pts.some((q) => q.offset === p.offset - 1);
+    const hasNext = pts.some((q) => q.offset === p.offset + 1);
+    if (!hasPrev && !hasNext) svg.appendChild(el('circle', { class: 'marker', cx: px(p.offset), cy: py(p.mean), r: 2.5 }));
+  });
+  // Un solo marcatore evidente, sul picco.
   const peak = pts.length ? pts.reduce((a, b) => (b.mean > a.mean ? b : a), pts[0]) : null;
   if (peak) {
     svg.appendChild(el('circle', { class: 'marker', cx: px(peak.offset), cy: py(peak.mean), r: 4.5 }));
@@ -529,22 +560,30 @@ function profileChart(points, readout) {
     }, n1(peak.mean)));
   }
 
-  // Bersaglio di tocco largo quanto una colonna, molto più grande del segno.
-  const colW = (W - ML - MR) / (x1 - x0);
+  // Bersaglio di tocco largo quanto una colonna. Solo 'click', non 'pointerdown':
+  // così un dito che scorre il grafico non cambia la lettura a ogni passaggio.
   points.forEach((p) => {
-    const hit = el('rect', { x: px(p.offset) - colW / 2, y: MT, width: colW, height: H - MT - MB, fill: 'transparent' });
+    const hit = el('rect', { x: px(p.offset) - DX / 2, y: MT, width: DX, height: H - MT - MB, fill: 'transparent' });
     const show = () => {
       readout.textContent = p.mean === null
         ? T.st.profileNoData(p.offset)
         : T.st.profileReadout(p.offset, n1(p.mean), p.n);
     };
-    hit.addEventListener('pointerdown', show);
-    hit.addEventListener('pointerenter', show);
+    hit.addEventListener('click', show);
+    hit.addEventListener('mouseenter', show);
     svg.appendChild(hit);
   });
 
-  svg.appendChild(el('text', { class: 'lbl', x: ML, y: H - 6 }, T.st.axisProfile));
-  return svg;
+  scroller.appendChild(svg);
+  wrap.appendChild(scroller);
+  // Etichetta dell'asse fuori dall'area scorrevole, così non sparisce scorrendo.
+  const out = document.createElement('div');
+  const lbl = document.createElement('div');
+  lbl.className = 'axislbl';
+  lbl.textContent = T.st.axisProfile;
+  out.appendChild(wrap);
+  out.appendChild(lbl);
+  return out;
 }
 
 // =============================================================================
@@ -681,9 +720,13 @@ function renderStats() {
     const c = card(T.st.profile);
     const ro = document.createElement('div');
     ro.className = 'readout';
-    c.appendChild(profileChart(a.profile, ro));
+    const chart = profileChart(a.profile, ro);
+    c.appendChild(chart);
     c.appendChild(ro);
-    ro.textContent = T.st.tapChart;
+    // Le statistiche si disegnano anche a schermata nascosta, dove la larghezza
+    // vale 0: il suggerimento dipende quindi dalla lunghezza dell'asse (> 4 settimane).
+    const span = a.profile[a.profile.length - 1].offset - a.profile[0].offset;
+    ro.textContent = span > 28 ? T.st.tapChartSwipe : T.st.tapChart;
     note(c, T.st.profileNote);
     details(c, [T.st.tblDay, T.st.tblMeanPain, T.st.tblCycles],
       a.profile.filter((p) => p.mean !== null)

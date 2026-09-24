@@ -3,7 +3,7 @@
 // IMPORTANTE — quando modifichi index.html, app.js, cycle.js o lo stile,
 // cambia il numero qui sotto (1 -> 2 -> 3 ...). È il segnale che dice a iOS
 // di scaricare la versione nuova invece di riusare quella in cache.
-const CACHE = 'ciclo-v5';
+const CACHE = 'ciclo-v6';
 
 const ASSETS = [
   './',

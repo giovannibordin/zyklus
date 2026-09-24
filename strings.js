@@ -143,6 +143,7 @@ export const T = {
 
     profile: 'Schmerz über den Zyklus',
     tapChart: 'Tippe auf das Diagramm, um einen Tag abzulesen.',
+    tapChartSwipe: 'Nach links/rechts wischen für den ganzen Zyklus, tippen, um einen Tag abzulesen.',
     profileNote: 'Die Null ist der erste Tag der Periode, negative Werte sind die Tage davor. Bleibt die Kurve auch weit weg von der Null hoch, ist der Schmerz nicht nur menstruell.',
     axisProfile: 'Tage seit Beginn der Periode',
     onset: 'Beginn',
