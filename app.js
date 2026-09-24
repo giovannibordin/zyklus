@@ -86,7 +86,6 @@ function clearAll() {
 
 let logs = [];              // tutte le registrazioni
 let byDate = new Map();
-let chartView = 'tl';         // vista scelta nella scheda del dolore: 'tl' | 'profile'
 let lastBackup = null;      // ISO string, oppure null se non è mai stato fatto
 let anchor = todayKey();    // mese mostrato nel calendario
 let editing = null;         // chiave del giorno aperto nell'editor
@@ -588,126 +587,6 @@ function attachScrub(svg, scroller, readout, { top, bottom }, pick) {
 }
 
 /**
- * Linea: dolore medio in funzione del giorno rispetto all'inizio del ciclo.
- *
- * L'asse x è lungo quanto il ciclo più lungo, quindi non entra sempre nello
- * schermo. L'asse y resta fermo a sinistra; l'area del grafico scorre in
- * orizzontale con il dito (scroll nativo, niente gesti fatti a mano).
- * Restituisce un <div>, non un <svg>.
- */
-function profileChart(points, readout) {
-  const H = 176, MT = 14, MB = 18, YW = 24, RW = 30, PAD = 12;
-  const DX = 11;                                // px per giorno: ~4 settimane visibili su un iPhone
-  const x0 = points[0].offset, x1 = points[points.length - 1].offset;
-  const PW = PAD * 2 + (x1 - x0) * DX;
-  const px = (o) => PAD + (o - x0) * DX;
-  const py = (v) => MT + (H - MT - MB) * (1 - v / 10);
-  const pts = points.filter((p) => p.mean !== null);
-
-  const wrap = document.createElement('div');
-  wrap.className = 'chart-wrap';
-
-  // -- asse y fisso
-  const ax = el('svg', { class: 'chart yaxis', width: YW, height: H, viewBox: `0 0 ${YW} ${H}`, 'aria-hidden': 'true' });
-  for (const t of [0, 5, 10]) {
-    ax.appendChild(el('text', { class: 'tick', x: YW - 4, y: py(t) + 3, 'text-anchor': 'end' }, String(t)));
-  }
-  wrap.appendChild(ax);
-
-  // -- legenda: due grandezze con scale diverse, quindi ognuna dice la sua
-  const legend = document.createElement('div');
-  legend.className = 'legend';
-  legend.innerHTML = '<span><i class="lg-line"></i></span><span><i class="lg-bar"></i></span>';
-  legend.children[0].append(T.st.legendPain);
-  legend.children[1].append(T.st.legendBloating);
-
-  // -- area scorrevole
-  const scroller = document.createElement('div');
-  scroller.className = 'chart-scroll';
-  const svg = el('svg', { class: 'chart', width: PW, height: H, viewBox: `0 0 ${PW} ${H}`, role: 'img',
-    'aria-label': T.st.profile });
-
-  for (const t of [0, 5, 10]) {
-    svg.appendChild(el('line', { class: 'gridline', x1: 0, x2: PW, y1: py(t), y2: py(t) }));
-  }
-  // Tacche ogni settimana, allineate all'inizio delle mestruazioni (…, -7, 0, 7, 14, …).
-  for (let t = Math.ceil(x0 / 7) * 7; t <= x1; t += 7) {
-    svg.appendChild(el('text', { class: 'tick', x: px(t), y: H - MB + 12, 'text-anchor': 'middle' }, String(t)));
-  }
-  svg.appendChild(el('line', { class: 'axis', x1: 0, x2: PW, y1: py(0), y2: py(0) }));
-  svg.appendChild(el('line', { class: 'onset', x1: px(0), x2: px(0), y1: MT, y2: py(0) }));
-  // etichetta in basso, dove non litiga con il picco della curva
-  svg.appendChild(el('text', { class: 'lbl', x: px(0) + 3, y: py(0) - 4 }, T.st.onset));
-
-  // Blähbauch: barre dietro la linea, 100 % = altezza piena (stessa altezza di 10/10).
-  // Le barre stanno sotto la linea del dolore, così non la coprono.
-  const bw = DX - 3;
-  points.forEach((p) => {
-    if (!p.bloatingPct) return;
-    const y = py(p.bloatingPct / 10);
-    svg.appendChild(el('rect', { class: 'bar2', x: px(p.offset) - bw / 2, y, width: bw, height: py(0) - y, rx: 2, ry: 2 }));
-  });
-
-  // La linea si interrompe dove mancano dati: unire due punti lontani
-  // inventerebbe dei giorni che nessuno ha registrato.
-  if (pts.length > 1) {
-    let d = '', prev = null;
-    for (const p of pts) {
-      d += `${prev !== null && p.offset === prev + 1 ? 'L' : 'M'}${px(p.offset).toFixed(1)},${py(p.mean).toFixed(1)} `;
-      prev = p.offset;
-    }
-    svg.appendChild(el('path', { class: 'series', d: d.trim() }));
-  }
-  // Punti isolati (senza vicini) altrimenti sarebbero invisibili.
-  pts.forEach((p) => {
-    const hasPrev = pts.some((q) => q.offset === p.offset - 1);
-    const hasNext = pts.some((q) => q.offset === p.offset + 1);
-    if (!hasPrev && !hasNext) svg.appendChild(el('circle', { class: 'marker', cx: px(p.offset), cy: py(p.mean), r: 2.5 }));
-  });
-  // Un solo marcatore evidente, sul picco.
-  const peak = pts.length ? pts.reduce((a, b) => (b.mean > a.mean ? b : a), pts[0]) : null;
-  if (peak) {
-    svg.appendChild(el('circle', { class: 'marker', cx: px(peak.offset), cy: py(peak.mean), r: 4.5 }));
-    svg.appendChild(el('text', {
-      class: 'vlabel', x: px(peak.offset), y: py(peak.mean) - 9, 'text-anchor': 'middle',
-    }, n1(peak.mean)));
-  }
-
-  // Lettura fluida: il cursore scatta sul giorno più vicino.
-  attachScrub(svg, scroller, readout, { top: MT, bottom: py(0) }, (x) => {
-    const k = Math.round((x - PAD) / DX) + x0;
-    const p = points.find((q) => q.offset === k);
-    if (!p) return null;
-    const day = `Tag ${k >= 0 ? '+' : ''}${k}`;
-    if (p.mean === null) return { x: px(k), y: null, lines: [day, T.st.tipNoData], text: T.st.profileNoData(k) };
-    return {
-      x: px(k), y: py(p.mean),
-      lines: [`${day} · ${T.st.tipCycles(p.n)}`, T.st.tipPainMean(n1(p.mean)), T.st.tipBloatPct(n0(p.bloatingPct), p.bloating, p.n)],
-      text: T.st.profileReadout(k, n1(p.mean), p.n, p.bloating),
-    };
-  });
-
-  scroller.appendChild(svg);
-  wrap.appendChild(scroller);
-
-  // -- asse destro fisso: percentuale dei cicli con Blähbauch
-  const ax2 = el('svg', { class: 'chart yaxis', width: RW, height: H, viewBox: `0 0 ${RW} ${H}`, 'aria-hidden': 'true' });
-  for (const t of [0, 50, 100]) {
-    ax2.appendChild(el('text', { class: 'tick', x: 4, y: py(t / 10) + 3, 'text-anchor': 'start' }, `${t}%`));
-  }
-  wrap.appendChild(ax2);
-  // Etichetta dell'asse fuori dall'area scorrevole, così non sparisce scorrendo.
-  const out = document.createElement('div');
-  out.appendChild(legend);
-  const lbl = document.createElement('div');
-  lbl.className = 'axislbl';
-  lbl.textContent = T.st.axisProfile;
-  out.appendChild(wrap);
-  out.appendChild(lbl);
-  return out;
-}
-
-/**
  * Linea nel tempo reale (calendario): dolore giorno per giorno, una linea rossa
  * a ogni inizio di ciclo, sfondo rosa sui giorni di mestruazioni, una tacca
  * arancione sotto l'asse nei giorni con Blähbauch. Scorre in orizzontale e
@@ -999,72 +878,29 @@ function renderStats() {
     host.appendChild(c);
   }
 
-  // -- dolore e Blähbauch: una scheda, due viste con un interruttore
-  //    "Zeitverlauf" (calendario, una linea per ogni inizio ciclo) e
-  //    "Ø pro Zyklustag" (cicli sovrapposti e mediati).
+  // -- dolore e Blähbauch nel tempo: una linea rossa per ogni inizio di ciclo,
+  //    sotto la tabella giorno per giorno (a pagine, i giorni più recenti prima).
   {
     const c = card(T.st.chartCardTitle);
-    const seg = document.createElement('div');
-    seg.className = 'seg view-switch';
-    seg.setAttribute('role', 'group');
-    seg.setAttribute('aria-label', T.st.chartCardTitle);
-    const panes = {};
+    const ro = document.createElement('div');
+    ro.className = 'readout';
+    c.appendChild(timelineChart(a, ro));
+    c.appendChild(ro);
+    ro.textContent = diffDays(a.logs[0].date, a.today) > 38 ? T.st.tlTap : T.st.tapChart;
+    note(c, T.st.tlNote);
 
-    // Vista 1: andamento nel tempo
-    {
-      const pane = document.createElement('div');
-      pane.dataset.pane = 'tl';
-      const ro = document.createElement('div');
-      ro.className = 'readout';
-      pane.appendChild(timelineChart(a, ro));
-      pane.appendChild(ro);
-      ro.textContent = diffDays(a.logs[0].date, a.today) > 38 ? T.st.tlTap : T.st.tapChart;
-      note(pane, T.st.tlNote);
-      panes.tl = pane;
-    }
-
-    // Vista 2: profilo medio per giorno del ciclo (serve almeno un ciclo)
-    if (a.profile.some((p) => p.mean !== null)) {
-      const pane = document.createElement('div');
-      pane.dataset.pane = 'profile';
-      const ro = document.createElement('div');
-      ro.className = 'readout';
-      pane.appendChild(profileChart(a.profile, ro));
-      pane.appendChild(ro);
-      // Le statistiche si disegnano anche a schermata nascosta, dove la larghezza
-      // vale 0: il suggerimento dipende quindi dalla lunghezza dell'asse (> 4 settimane).
-      const span = a.profile[a.profile.length - 1].offset - a.profile[0].offset;
-      ro.textContent = span > 28 ? T.st.tapChartSwipe : T.st.tapChart;
-      note(pane, T.st.profileNote);
-      details(pane, [T.st.tblDay, T.st.tblMeanPain, T.st.tblBloating, T.st.tblCycles],
-        a.profile.filter((p) => p.mean !== null)
-          .map((p) => [`${p.offset >= 0 ? '+' : ''}${p.offset}`, n1(p.mean), `${n0(p.bloatingPct)} %`, String(p.n)]),
-        T.st.seeNumbers, { pageSize: 14 });
-      panes.profile = pane;
-    }
-
-    const keys = Object.keys(panes);
-    if (!panes[chartView]) chartView = 'tl';
-    const select = (k) => {
-      chartView = k;                       // resta scelta anche dopo un salvataggio
-      keys.forEach((x) => {
-        panes[x].hidden = x !== k;
-        seg.querySelector(`[data-k="${x}"]`).setAttribute('aria-pressed', String(x === k));
-      });
+    const cycleDayOf = (k) => {
+      let st = null;
+      for (const x of a.cycles) if (x.start <= k) st = x.start;
+      return st ? diffDays(st, k) + 1 : null;
     };
-    if (keys.length > 1) {
-      keys.forEach((k) => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.dataset.k = k;
-        btn.textContent = k === 'tl' ? T.st.viewTimeline : T.st.viewProfile;
-        btn.addEventListener('click', () => select(k));
-        seg.appendChild(btn);
-      });
-      c.appendChild(seg);
-    }
-    keys.forEach((k) => c.appendChild(panes[k]));
-    select(chartView);
+    details(c, [T.st.tblDate, T.st.tblCycleDay, T.st.tblPain, T.st.tblBloating],
+      [...a.logs].reverse().map((l) => {
+        const cd = cycleDayOf(l.date);
+        return [fullDate(l.date), cd ? String(cd) : '—', `${l.pain}/10`,
+          l.symptoms.includes('bloating') ? T.st.yes : '—'];
+      }),
+      T.st.seeNumbers, { pageSize: 14 });
     host.appendChild(c);
   }
 
