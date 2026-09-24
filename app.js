@@ -86,6 +86,7 @@ function clearAll() {
 
 let logs = [];              // tutte le registrazioni
 let byDate = new Map();
+let chartView = 'tl';         // vista scelta nella scheda del dolore: 'tl' | 'profile'
 let lastBackup = null;      // ISO string, oppure null se non è mai stato fatto
 let anchor = todayKey();    // mese mostrato nel calendario
 let editing = null;         // chiave del giorno aperto nell'editor
@@ -998,35 +999,72 @@ function renderStats() {
     host.appendChild(c);
   }
 
-  // -- dolore nel tempo (calendario), una linea per ogni inizio di ciclo
+  // -- dolore e Blähbauch: una scheda, due viste con un interruttore
+  //    "Zeitverlauf" (calendario, una linea per ogni inizio ciclo) e
+  //    "Ø pro Zyklustag" (cicli sovrapposti e mediati).
   {
-    const c = card(T.st.tlTitle);
-    const ro = document.createElement('div');
-    ro.className = 'readout';
-    c.appendChild(timelineChart(a, ro));
-    c.appendChild(ro);
-    ro.textContent = diffDays(a.logs[0].date, a.today) > 38 ? T.st.tlTap : T.st.tapChart;
-    note(c, T.st.tlNote);
-    host.appendChild(c);
-  }
+    const c = card(T.st.chartCardTitle);
+    const seg = document.createElement('div');
+    seg.className = 'seg view-switch';
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', T.st.chartCardTitle);
+    const panes = {};
 
-  // -- profilo del dolore
-  if (a.profile.some((p) => p.mean !== null)) {
-    const c = card(T.st.profile);
-    const ro = document.createElement('div');
-    ro.className = 'readout';
-    const chart = profileChart(a.profile, ro);
-    c.appendChild(chart);
-    c.appendChild(ro);
-    // Le statistiche si disegnano anche a schermata nascosta, dove la larghezza
-    // vale 0: il suggerimento dipende quindi dalla lunghezza dell'asse (> 4 settimane).
-    const span = a.profile[a.profile.length - 1].offset - a.profile[0].offset;
-    ro.textContent = span > 28 ? T.st.tapChartSwipe : T.st.tapChart;
-    note(c, T.st.profileNote);
-    details(c, [T.st.tblDay, T.st.tblMeanPain, T.st.tblBloating, T.st.tblCycles],
-      a.profile.filter((p) => p.mean !== null)
-        .map((p) => [`${p.offset >= 0 ? '+' : ''}${p.offset}`, n1(p.mean), `${n0(p.bloatingPct)} %`, String(p.n)]),
-      T.st.seeNumbers, { pageSize: 14 });
+    // Vista 1: andamento nel tempo
+    {
+      const pane = document.createElement('div');
+      pane.dataset.pane = 'tl';
+      const ro = document.createElement('div');
+      ro.className = 'readout';
+      pane.appendChild(timelineChart(a, ro));
+      pane.appendChild(ro);
+      ro.textContent = diffDays(a.logs[0].date, a.today) > 38 ? T.st.tlTap : T.st.tapChart;
+      note(pane, T.st.tlNote);
+      panes.tl = pane;
+    }
+
+    // Vista 2: profilo medio per giorno del ciclo (serve almeno un ciclo)
+    if (a.profile.some((p) => p.mean !== null)) {
+      const pane = document.createElement('div');
+      pane.dataset.pane = 'profile';
+      const ro = document.createElement('div');
+      ro.className = 'readout';
+      pane.appendChild(profileChart(a.profile, ro));
+      pane.appendChild(ro);
+      // Le statistiche si disegnano anche a schermata nascosta, dove la larghezza
+      // vale 0: il suggerimento dipende quindi dalla lunghezza dell'asse (> 4 settimane).
+      const span = a.profile[a.profile.length - 1].offset - a.profile[0].offset;
+      ro.textContent = span > 28 ? T.st.tapChartSwipe : T.st.tapChart;
+      note(pane, T.st.profileNote);
+      details(pane, [T.st.tblDay, T.st.tblMeanPain, T.st.tblBloating, T.st.tblCycles],
+        a.profile.filter((p) => p.mean !== null)
+          .map((p) => [`${p.offset >= 0 ? '+' : ''}${p.offset}`, n1(p.mean), `${n0(p.bloatingPct)} %`, String(p.n)]),
+        T.st.seeNumbers, { pageSize: 14 });
+      panes.profile = pane;
+    }
+
+    const keys = Object.keys(panes);
+    if (!panes[chartView]) chartView = 'tl';
+    const select = (k) => {
+      chartView = k;                       // resta scelta anche dopo un salvataggio
+      keys.forEach((x) => {
+        panes[x].hidden = x !== k;
+        seg.querySelector(`[data-k="${x}"]`).setAttribute('aria-pressed', String(x === k));
+      });
+    };
+    if (keys.length > 1) {
+      keys.forEach((k) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.dataset.k = k;
+        btn.textContent = k === 'tl' ? T.st.viewTimeline : T.st.viewProfile;
+        btn.addEventListener('click', () => select(k));
+        seg.appendChild(btn);
+      });
+      c.appendChild(seg);
+    }
+    keys.forEach((k) => c.appendChild(panes[k]));
+    select(chartView);
     host.appendChild(c);
   }
 
