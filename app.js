@@ -491,6 +491,102 @@ function cycleChart(cycles, readout) {
 }
 
 /**
+ * Lettura "fluida" dei grafici scorrevoli.
+ *
+ *  - tocco breve            → cursore e fumetto sul giorno toccato
+ *  - dito tenuto ~0,2 s     → modalità lettura: il cursore segue il dito e il
+ *                             grafico NON scorre (come in Salute di Apple)
+ *  - trascinamento subito   → scorrimento normale del grafico
+ *  - mouse (PC)             → il cursore segue il puntatore
+ *
+ * `pick(x)` riceve la x in coordinate SVG e restituisce
+ * { x, y | null, lines: [titolo, riga, …], text } oppure null.
+ */
+function attachScrub(svg, scroller, readout, { top, bottom }, pick) {
+  const g = el('g', { class: 'scrub', visibility: 'hidden', 'pointer-events': 'none' });
+  const line = el('line', { class: 'cursor', y1: top, y2: bottom });
+  const dot = el('circle', { class: 'cursordot', r: 4.5 });
+  const tip = el('g', { class: 'tip' });
+  const box = el('rect', { class: 'tipbox', rx: 7, ry: 7 });
+  tip.appendChild(box);
+  g.append(line, dot, tip);
+  svg.appendChild(g);
+  const W = Number(svg.getAttribute('width'));
+
+  let lastX = null;
+  const show = (x) => {
+    const r = pick(Math.max(0, Math.min(W, x)));
+    if (!r) return;
+    if (r.x === lastX && g.getAttribute('visibility') === 'visible') return;
+    lastX = r.x;
+    g.setAttribute('visibility', 'visible');
+    line.setAttribute('x1', r.x); line.setAttribute('x2', r.x);
+    if (r.y === null) dot.setAttribute('visibility', 'hidden');
+    else { dot.setAttribute('visibility', 'visible'); dot.setAttribute('cx', r.x); dot.setAttribute('cy', r.y); }
+
+    // testo del fumetto
+    tip.querySelectorAll('text').forEach((t) => t.remove());
+    let wMax = 0;
+    r.lines.forEach((txt, i) => {
+      const t = el('text', { class: i === 0 ? 'tiptitle' : 'tiptext', x: 0, y: 14 + i * 13 }, txt);
+      tip.appendChild(t);
+      wMax = Math.max(wMax, t.getComputedTextLength ? t.getComputedTextLength() : txt.length * 6);
+    });
+    const bw = Math.ceil(wMax) + 16, bh = 8 + r.lines.length * 13;
+    box.setAttribute('width', bw); box.setAttribute('height', bh);
+    tip.querySelectorAll('text').forEach((t) => t.setAttribute('x', 8));
+    // Il fumetto sta dal lato del cursore dove c'è posto, dentro la parte visibile.
+    const visL = scroller.scrollLeft + 2, visR = scroller.scrollLeft + scroller.clientWidth - 2;
+    let tx = r.x + 10;
+    if (tx + bw > visR) tx = r.x - 10 - bw;
+    tx = Math.max(visL, Math.min(tx, visR - bw));
+    tip.setAttribute('transform', `translate(${tx},${top})`);
+    readout.textContent = r.text;
+  };
+  const xOf = (clientX) => clientX - svg.getBoundingClientRect().left;
+
+  // -- dito
+  let timer = null, scrubbing = false, moved = false, sx = 0, sy = 0;
+  svg.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    sx = t.clientX; sy = t.clientY; moved = false; scrubbing = false;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      scrubbing = true;
+      svg.classList.add('scrubbing');
+      show(xOf(sx));
+    }, 180);
+  }, { passive: true });
+  svg.addEventListener('touchmove', (e) => {
+    const t = e.touches[0];
+    if (scrubbing) {
+      e.preventDefault();          // il grafico resta fermo, si muove solo il cursore
+      show(xOf(t.clientX));
+      return;
+    }
+    if (Math.abs(t.clientX - sx) > 8 || Math.abs(t.clientY - sy) > 8) {
+      moved = true;                // è uno scorrimento: lascialo al browser
+      clearTimeout(timer);
+    }
+  }, { passive: false });
+  const end = () => {
+    clearTimeout(timer);
+    if (!scrubbing && !moved) show(xOf(sx));   // tocco breve
+    scrubbing = false;
+    svg.classList.remove('scrubbing');
+  };
+  svg.addEventListener('touchend', end);
+  svg.addEventListener('touchcancel', () => { clearTimeout(timer); scrubbing = false; svg.classList.remove('scrubbing'); });
+
+  // -- mouse
+  svg.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse') show(xOf(e.clientX)); });
+  svg.addEventListener('click', (e) => show(xOf(e.clientX)));
+
+  return { show };
+}
+
+/**
  * Linea: dolore medio in funzione del giorno rispetto all'inizio del ciclo.
  *
  * L'asse x è lungo quanto il ciclo più lungo, quindi non entra sempre nello
@@ -576,18 +672,18 @@ function profileChart(points, readout) {
     }, n1(peak.mean)));
   }
 
-  // Bersaglio di tocco largo quanto una colonna. Solo 'click', non 'pointerdown':
-  // così un dito che scorre il grafico non cambia la lettura a ogni passaggio.
-  points.forEach((p) => {
-    const hit = el('rect', { x: px(p.offset) - DX / 2, y: MT, width: DX, height: H - MT - MB, fill: 'transparent' });
-    const show = () => {
-      readout.textContent = p.mean === null
-        ? T.st.profileNoData(p.offset)
-        : T.st.profileReadout(p.offset, n1(p.mean), p.n, p.bloating);
+  // Lettura fluida: il cursore scatta sul giorno più vicino.
+  attachScrub(svg, scroller, readout, { top: MT, bottom: py(0) }, (x) => {
+    const k = Math.round((x - PAD) / DX) + x0;
+    const p = points.find((q) => q.offset === k);
+    if (!p) return null;
+    const day = `Tag ${k >= 0 ? '+' : ''}${k}`;
+    if (p.mean === null) return { x: px(k), y: null, lines: [day, T.st.tipNoData], text: T.st.profileNoData(k) };
+    return {
+      x: px(k), y: py(p.mean),
+      lines: [`${day} · ${T.st.tipCycles(p.n)}`, T.st.tipPainMean(n1(p.mean)), T.st.tipBloatPct(n0(p.bloatingPct), p.bloating, p.n)],
+      text: T.st.profileReadout(k, n1(p.mean), p.n, p.bloating),
     };
-    hit.addEventListener('click', show);
-    hit.addEventListener('mouseenter', show);
-    svg.appendChild(hit);
   });
 
   scroller.appendChild(svg);
@@ -697,20 +793,24 @@ function timelineChart(a, readout) {
     if (!hasPrev && !hasNext) svg.appendChild(el('circle', { class: 'marker', cx: px(l.date), cy: py(l.pain), r: 2.5 }));
   });
 
-  // Bersagli di tocco, uno per giorno.
-  for (let k = first; k <= last; k = addDays(k, 1)) {
-    const hit = el('rect', { x: px(k) - DX / 2, y: MT, width: DX, height: H - MT - MB + 12, fill: 'transparent' });
-    const key = k;
-    const show = () => {
-      const l = byDay.get(key), cd = cycleDay(key);
-      readout.textContent = l
-        ? T.st.tlReadout(fullDate(key), cd, l.pain, l.symptoms.includes('bloating'))
-        : T.st.tlNoData(fullDate(key), cd);
-    };
-    hit.addEventListener('click', show);
-    hit.addEventListener('mouseenter', show);
-    svg.appendChild(hit);
-  }
+  // Lettura fluida: data, giorno del ciclo, dolore e Blähbauch del giorno sotto il dito.
+  attachScrub(svg, scroller, readout, { top: MT, bottom: py(0) + 12 }, (x) => {
+    const n = Math.round((x - PAD) / DX);
+    if (n < 0 || n > days) return null;
+    const key = addDays(first, n);
+    const l = byDay.get(key), cd = cycleDay(key);
+    const dt = fromKey(key);
+    const title = `${T.weekdays[dt.getDay()].slice(0, 2)}, ${fullDate(key)}`;
+    const lines = [title];
+    if (cd) lines.push(T.st.tipCycleDay(cd));
+    if (!l) {
+      lines.push(T.st.tipNoData);
+      return { x: px(key), y: null, lines, text: T.st.tlNoData(fullDate(key), cd) };
+    }
+    lines.push(T.st.tipPain(l.pain), T.st.tipBloat(l.symptoms.includes('bloating')));
+    return { x: px(key), y: py(l.pain), lines,
+      text: T.st.tlReadout(fullDate(key), cd, l.pain, l.symptoms.includes('bloating')) };
+  });
 
   scroller.appendChild(svg);
   wrap.appendChild(scroller);

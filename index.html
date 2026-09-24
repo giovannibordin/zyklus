@@ -280,6 +280,12 @@ details[open] > summary::after { content: "▴"; }
 .chart .mens { fill: var(--flow-1); opacity: 0.18; }
 .lg-start { width: 0; height: 12px; border-left: 1.5px dashed var(--flow-2); }
 .lg-tick { width: 9px; height: 6px; background: var(--bloat); opacity: 0.55; border-radius: 1.5px; }
+.chart-scroll .chart { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.chart .cursor { stroke: var(--ink-2); stroke-width: 1; }
+.chart .cursordot { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+.chart .tipbox { fill: var(--surface); stroke: var(--axis); stroke-width: 1; filter: drop-shadow(0 1px 3px rgba(0,0,0,0.18)); }
+.chart .tiptitle { fill: var(--ink); font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.chart .tiptext { fill: var(--ink-2); font-size: 10.5px; font-variant-numeric: tabular-nums; }
 .axislbl { font-size: 9px; color: var(--ink-2); padding-left: 36px; margin-bottom: 4px; }
 .readout { font-size: 0.74rem; color: var(--ink-2); min-height: 1.1em; margin-top: 2px; font-variant-numeric: tabular-nums; }
 
