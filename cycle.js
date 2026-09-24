@@ -215,6 +215,7 @@ export function analyse(logs, today = todayKey()) {
 
   // --- Profilo del dolore allineato all'inizio delle mestruazioni
   const painByDay = new Map(sorted.map((l) => [l.date, l.pain]));
+  const logByDay = new Map(sorted.map((l) => [l.date, l]));
   // L'asse arriva fino all'ultimo giorno del ciclo più lungo (e fino a oggi per
   // quello aperto): prima era fisso a +20 e tutto ciò che seguiva spariva.
   // Minimo +20 perché il grafico abbia sempre una forma leggibile; tetto a 120
@@ -228,13 +229,25 @@ export function analyse(logs, today = todayKey()) {
   const profile = [];
   for (let k = -7; k <= lastOffset; k++) {
     const vals = [];
+    let bloating = 0;
     for (const c of cycles) {
       const d = addDays(c.start, k);
       if (c.closed && d > c.end) continue;   // non sconfinare nel ciclo successivo
       if (d > today) continue;
-      if (painByDay.has(d)) vals.push(painByDay.get(d));
+      const l = logByDay.get(d);
+      if (!l) continue;
+      vals.push(l.pain);
+      if (l.symptoms.includes('bloating')) bloating++;
     }
-    profile.push({ offset: k, mean: vals.length ? avg(vals) : null, n: vals.length });
+    // Blähbauch è un sì/no: la grandezza sensata è la quota di cicli in cui
+    // quel giorno c'era, sullo stesso denominatore del dolore (giorni registrati).
+    profile.push({
+      offset: k,
+      mean: vals.length ? avg(vals) : null,
+      n: vals.length,
+      bloating,
+      bloatingPct: vals.length ? (100 * bloating) / vals.length : null,
+    });
   }
 
   // --- Sintomi

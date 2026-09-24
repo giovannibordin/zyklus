@@ -499,7 +499,7 @@ function cycleChart(cycles, readout) {
  * Restituisce un <div>, non un <svg>.
  */
 function profileChart(points, readout) {
-  const H = 176, MT = 14, MB = 18, YW = 24, PAD = 12;
+  const H = 176, MT = 14, MB = 18, YW = 24, RW = 30, PAD = 12;
   const DX = 11;                                // px per giorno: ~4 settimane visibili su un iPhone
   const x0 = points[0].offset, x1 = points[points.length - 1].offset;
   const PW = PAD * 2 + (x1 - x0) * DX;
@@ -516,6 +516,13 @@ function profileChart(points, readout) {
     ax.appendChild(el('text', { class: 'tick', x: YW - 4, y: py(t) + 3, 'text-anchor': 'end' }, String(t)));
   }
   wrap.appendChild(ax);
+
+  // -- legenda: due grandezze con scale diverse, quindi ognuna dice la sua
+  const legend = document.createElement('div');
+  legend.className = 'legend';
+  legend.innerHTML = '<span><i class="lg-line"></i></span><span><i class="lg-bar"></i></span>';
+  legend.children[0].append(T.st.legendPain);
+  legend.children[1].append(T.st.legendBloating);
 
   // -- area scorrevole
   const scroller = document.createElement('div');
@@ -534,6 +541,15 @@ function profileChart(points, readout) {
   svg.appendChild(el('line', { class: 'onset', x1: px(0), x2: px(0), y1: MT, y2: py(0) }));
   // etichetta in basso, dove non litiga con il picco della curva
   svg.appendChild(el('text', { class: 'lbl', x: px(0) + 3, y: py(0) - 4 }, T.st.onset));
+
+  // Blähbauch: barre dietro la linea, 100 % = altezza piena (stessa altezza di 10/10).
+  // Le barre stanno sotto la linea del dolore, così non la coprono.
+  const bw = DX - 3;
+  points.forEach((p) => {
+    if (!p.bloatingPct) return;
+    const y = py(p.bloatingPct / 10);
+    svg.appendChild(el('rect', { class: 'bar2', x: px(p.offset) - bw / 2, y, width: bw, height: py(0) - y, rx: 2, ry: 2 }));
+  });
 
   // La linea si interrompe dove mancano dati: unire due punti lontani
   // inventerebbe dei giorni che nessuno ha registrato.
@@ -567,7 +583,7 @@ function profileChart(points, readout) {
     const show = () => {
       readout.textContent = p.mean === null
         ? T.st.profileNoData(p.offset)
-        : T.st.profileReadout(p.offset, n1(p.mean), p.n);
+        : T.st.profileReadout(p.offset, n1(p.mean), p.n, p.bloating);
     };
     hit.addEventListener('click', show);
     hit.addEventListener('mouseenter', show);
@@ -576,13 +592,142 @@ function profileChart(points, readout) {
 
   scroller.appendChild(svg);
   wrap.appendChild(scroller);
+
+  // -- asse destro fisso: percentuale dei cicli con Blähbauch
+  const ax2 = el('svg', { class: 'chart yaxis', width: RW, height: H, viewBox: `0 0 ${RW} ${H}`, 'aria-hidden': 'true' });
+  for (const t of [0, 50, 100]) {
+    ax2.appendChild(el('text', { class: 'tick', x: 4, y: py(t / 10) + 3, 'text-anchor': 'start' }, `${t}%`));
+  }
+  wrap.appendChild(ax2);
   // Etichetta dell'asse fuori dall'area scorrevole, così non sparisce scorrendo.
   const out = document.createElement('div');
+  out.appendChild(legend);
   const lbl = document.createElement('div');
   lbl.className = 'axislbl';
   lbl.textContent = T.st.axisProfile;
   out.appendChild(wrap);
   out.appendChild(lbl);
+  return out;
+}
+
+/**
+ * Linea nel tempo reale (calendario): dolore giorno per giorno, una linea rossa
+ * a ogni inizio di ciclo, sfondo rosa sui giorni di mestruazioni, una tacca
+ * arancione sotto l'asse nei giorni con Blähbauch. Scorre in orizzontale e
+ * parte mostrando i giorni più recenti.
+ */
+function timelineChart(a, readout) {
+  const H = 186, MT = 18, MB = 34, YW = 24, PAD = 10, DX = 8;
+  const first = [a.logs[0].date, ...(a.cycles.length ? [a.cycles[0].start] : [])].sort()[0];
+  const last = a.today > a.logs[a.logs.length - 1].date ? a.today : a.logs[a.logs.length - 1].date;
+  const days = diffDays(first, last);
+  const PW = PAD * 2 + days * DX;
+  const px = (k) => PAD + diffDays(first, k) * DX;
+  const py = (v) => MT + (H - MT - MB) * (1 - v / 10);
+  const byDay = new Map(a.logs.map((l) => [l.date, l]));
+  const cycleDay = (k) => {
+    let c = null;
+    for (const x of a.cycles) if (x.start <= k) c = x;
+    return c ? diffDays(c.start, k) + 1 : null;
+  };
+
+  const out = document.createElement('div');
+  const legend = document.createElement('div');
+  legend.className = 'legend';
+  legend.innerHTML = '<span><i class="lg-line"></i></span><span><i class="lg-start"></i></span><span><i class="lg-tick"></i></span>';
+  legend.children[0].append(T.st.tlLegendPain);
+  legend.children[1].append(T.st.tlLegendStart);
+  legend.children[2].append(T.st.tlLegendBloat);
+  out.appendChild(legend);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'chart-wrap';
+  const ax = el('svg', { class: 'chart yaxis', width: YW, height: H, viewBox: `0 0 ${YW} ${H}`, 'aria-hidden': 'true' });
+  for (const t of [0, 5, 10]) {
+    ax.appendChild(el('text', { class: 'tick', x: YW - 4, y: py(t) + 3, 'text-anchor': 'end' }, String(t)));
+  }
+  wrap.appendChild(ax);
+
+  const scroller = document.createElement('div');
+  scroller.className = 'chart-scroll';
+  const svg = el('svg', { class: 'chart', width: PW, height: H, viewBox: `0 0 ${PW} ${H}`, role: 'img',
+    'aria-label': T.st.tlTitle });
+
+  // Sfondo dei giorni di mestruazioni (sotto a tutto il resto).
+  for (const k of a.menstrualDays) {
+    if (k < first || k > last) continue;
+    svg.appendChild(el('rect', { class: 'mens', x: px(k) - DX / 2, y: MT, width: DX, height: py(0) - MT }));
+  }
+  for (const t of [0, 5, 10]) {
+    svg.appendChild(el('line', { class: 'gridline', x1: 0, x2: PW, y1: py(t), y2: py(t) }));
+  }
+  // Mesi sull'asse x: una tacca al primo di ogni mese.
+  for (let k = first; k <= last; k = addDays(k, 1)) {
+    if (!k.endsWith('-01') && k !== first) continue;
+    const d = fromKey(k);
+    const lbl = T.monthsShort[d.getMonth()] + (d.getMonth() === 0 || k === first ? ` ${String(d.getFullYear()).slice(2)}` : '');
+    svg.appendChild(el('line', { class: 'gridline', x1: px(k), x2: px(k), y1: py(0), y2: py(0) + 4 }));
+    svg.appendChild(el('text', { class: 'tick', x: px(k) + 2, y: H - 6, 'text-anchor': 'start' }, lbl));
+  }
+  svg.appendChild(el('line', { class: 'axis', x1: 0, x2: PW, y1: py(0), y2: py(0) }));
+
+  // Una linea rossa per ogni ciclo, con la data sopra.
+  for (const c of a.cycles) {
+    const d = fromKey(c.start);
+    svg.appendChild(el('line', { class: 'onset', x1: px(c.start), x2: px(c.start), y1: MT - 4, y2: py(0) }));
+    svg.appendChild(el('text', { class: 'lbl', x: px(c.start) + 3, y: MT - 7 }, `${d.getDate()}. ${T.monthsShort[d.getMonth()]}`));
+  }
+
+  // Blähbauch: tacca sotto l'asse, così non si confonde con la curva.
+  for (const l of a.logs) {
+    if (!l.symptoms.includes('bloating')) continue;
+    svg.appendChild(el('rect', { class: 'bar2', x: px(l.date) - (DX - 2) / 2, y: py(0) + 5, width: DX - 2, height: 6, rx: 1.5, ry: 1.5 }));
+  }
+
+  // Curva del dolore, interrotta nei giorni senza registrazione.
+  let d = '', prev = null;
+  for (const l of a.logs) {
+    d += `${prev !== null && diffDays(prev, l.date) === 1 ? 'L' : 'M'}${px(l.date).toFixed(1)},${py(l.pain).toFixed(1)} `;
+    prev = l.date;
+  }
+  svg.appendChild(el('path', { class: 'series', d: d.trim() }));
+  a.logs.forEach((l, i) => {
+    const hasPrev = i > 0 && diffDays(a.logs[i - 1].date, l.date) === 1;
+    const hasNext = i < a.logs.length - 1 && diffDays(l.date, a.logs[i + 1].date) === 1;
+    if (!hasPrev && !hasNext) svg.appendChild(el('circle', { class: 'marker', cx: px(l.date), cy: py(l.pain), r: 2.5 }));
+  });
+
+  // Bersagli di tocco, uno per giorno.
+  for (let k = first; k <= last; k = addDays(k, 1)) {
+    const hit = el('rect', { x: px(k) - DX / 2, y: MT, width: DX, height: H - MT - MB + 12, fill: 'transparent' });
+    const key = k;
+    const show = () => {
+      const l = byDay.get(key), cd = cycleDay(key);
+      readout.textContent = l
+        ? T.st.tlReadout(fullDate(key), cd, l.pain, l.symptoms.includes('bloating'))
+        : T.st.tlNoData(fullDate(key), cd);
+    };
+    hit.addEventListener('click', show);
+    hit.addEventListener('mouseenter', show);
+    svg.appendChild(hit);
+  }
+
+  scroller.appendChild(svg);
+  wrap.appendChild(scroller);
+  out.appendChild(wrap);
+
+  // Parte dai giorni più recenti. Le statistiche si disegnano anche a schermata
+  // nascosta (larghezza 0), quindi si aspetta che il riquadro abbia una misura.
+  const toEnd = () => { scroller.scrollLeft = scroller.scrollWidth; };
+  if ('ResizeObserver' in window) {
+    let done = false;
+    const ro = new ResizeObserver(() => {
+      if (!done && scroller.clientWidth > 0) { done = true; toEnd(); ro.disconnect(); }
+    });
+    ro.observe(scroller);
+  } else {
+    requestAnimationFrame(toEnd);
+  }
   return out;
 }
 
@@ -617,7 +762,12 @@ function note(parent, text) {
   parent.appendChild(p);
 }
 
-function details(parent, headers, rows, label = T.st.seeNumbers) {
+/**
+ * Tabella richiudibile. Oltre `pageSize` righe si divide in pagine con
+ * ‹ Seite i von n ›, così la scheda non diventa lunghissima.
+ * `startPage`: 'first' | 'last' (per le liste in cui interessano gli ultimi giorni).
+ */
+function details(parent, headers, rows, label = T.st.seeNumbers, { pageSize = 14, startPage = 'first' } = {}) {
   const det = document.createElement('details');
   const sum = document.createElement('summary');
   sum.textContent = label;
@@ -626,13 +776,46 @@ function details(parent, headers, rows, label = T.st.seeNumbers) {
   t.className = 'data';
   const head = document.createElement('tr');
   headers.forEach((h) => { const th = document.createElement('th'); th.textContent = h; head.appendChild(th); });
-  t.appendChild(head);
-  rows.forEach((cells) => {
-    const tr2 = document.createElement('tr');
-    cells.forEach((c) => { const td = document.createElement('td'); td.textContent = c; tr2.appendChild(td); });
-    t.appendChild(tr2);
-  });
+  const body = document.createElement('tbody');
+  const thead = document.createElement('thead');
+  thead.appendChild(head);
+  t.appendChild(thead);
+  t.appendChild(body);
   det.appendChild(t);
+
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+  let page = startPage === 'last' ? pages - 1 : 0;
+  let nav = null, prev, next, info;
+
+  const draw = () => {
+    body.textContent = '';
+    rows.slice(page * pageSize, (page + 1) * pageSize).forEach((cells) => {
+      const tr2 = document.createElement('tr');
+      cells.forEach((c) => { const td = document.createElement('td'); td.textContent = c; tr2.appendChild(td); });
+      body.appendChild(tr2);
+    });
+    if (nav) {
+      info.textContent = T.st.pageOf(page + 1, pages);
+      prev.disabled = page === 0;
+      next.disabled = page === pages - 1;
+    }
+  };
+
+  if (pages > 1) {
+    nav = document.createElement('div');
+    nav.className = 'pager';
+    prev = document.createElement('button');
+    prev.type = 'button'; prev.textContent = '‹'; prev.setAttribute('aria-label', T.st.pagePrev);
+    next = document.createElement('button');
+    next.type = 'button'; next.textContent = '›'; next.setAttribute('aria-label', T.st.pageNext);
+    info = document.createElement('span');
+    info.setAttribute('aria-live', 'polite');
+    prev.addEventListener('click', () => { if (page > 0) { page--; draw(); } });
+    next.addEventListener('click', () => { if (page < pages - 1) { page++; draw(); } });
+    nav.append(prev, info, next);
+    det.appendChild(nav);
+  }
+  draw();
   parent.appendChild(det);
 }
 
@@ -715,6 +898,18 @@ function renderStats() {
     host.appendChild(c);
   }
 
+  // -- dolore nel tempo (calendario), una linea per ogni inizio di ciclo
+  {
+    const c = card(T.st.tlTitle);
+    const ro = document.createElement('div');
+    ro.className = 'readout';
+    c.appendChild(timelineChart(a, ro));
+    c.appendChild(ro);
+    ro.textContent = diffDays(a.logs[0].date, a.today) > 38 ? T.st.tlTap : T.st.tapChart;
+    note(c, T.st.tlNote);
+    host.appendChild(c);
+  }
+
   // -- profilo del dolore
   if (a.profile.some((p) => p.mean !== null)) {
     const c = card(T.st.profile);
@@ -728,9 +923,10 @@ function renderStats() {
     const span = a.profile[a.profile.length - 1].offset - a.profile[0].offset;
     ro.textContent = span > 28 ? T.st.tapChartSwipe : T.st.tapChart;
     note(c, T.st.profileNote);
-    details(c, [T.st.tblDay, T.st.tblMeanPain, T.st.tblCycles],
+    details(c, [T.st.tblDay, T.st.tblMeanPain, T.st.tblBloating, T.st.tblCycles],
       a.profile.filter((p) => p.mean !== null)
-        .map((p) => [`${p.offset >= 0 ? '+' : ''}${p.offset}`, n1(p.mean), String(p.n)]));
+        .map((p) => [`${p.offset >= 0 ? '+' : ''}${p.offset}`, n1(p.mean), `${n0(p.bloatingPct)} %`, String(p.n)]),
+      T.st.seeNumbers, { pageSize: 14 });
     host.appendChild(c);
   }
 
@@ -943,7 +1139,7 @@ function buildSummary() {
   t += '\n' + S.profile + '\n' + S.profileHead + '\n';
   for (const pt of a.profile) {
     if (pt.mean === null) continue;
-    t += `${pt.offset >= 0 ? '+' : ''}${pt.offset}: ${n1(pt.mean)} (n=${pt.n})\n`;
+    t += `${pt.offset >= 0 ? '+' : ''}${pt.offset}: ${n1(pt.mean)} (n=${pt.n}, ${T.st.tblBloating} ${pt.bloating}/${pt.n})\n`;
   }
 
   t += '\n' + S.defs + '\n';
